@@ -57,3 +57,37 @@ def discrete_to_color(label_array, label_order=None, palette="husl"):
     colorize_vec = np.vectorize(colorize)
     color_array = np.transpose(colorize_vec(label_array))
     return color_array
+
+
+def plot_representations(out, col, ind=None, lims=None, xlim=None, ylim=None):
+    """Plots the 2d transcriptomic and epigenetic representations side-by-side
+
+    Args:
+        out (Dict): Should contain keys `zT` and `zE`
+        ind (np.array): indices to plot. None plots all points. 
+        col (np.array): color for each point
+        lims : Only used if xlim and ylim are both None
+        xlim : provide ylim if using this 
+        ylim : provide xlim if using this 
+    """
+    if (xlim is None) and (ylim is None):
+        xlim = lims
+        ylim = lims
+
+    if ind is None:
+        ind = np.arange(out['zT'].shape[0])
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    ax[0].scatter(out['zT'][ind, 0], out['zT'][ind, 1], s=1, c=col[ind])
+    ax[0].set(**{'xlim': (xlim[0], xlim[1]),
+                 'ylim': (ylim[0], ylim[1]),
+                 'title': 'Transcriptomic'})
+
+    ax[1].scatter(out['zE'][ind, 0], out['zE'][ind, 1], s=1, c=col[ind])
+    ax[1].set(**{'xlim': (xlim[0], xlim[1]),
+                 'ylim': (ylim[0], ylim[1]),
+                 'title': 'Epigenetic'})
+    return
+
+
+#unique_labels = np.unique(M['ClusterAnno'].values)
+#unique_cols = discrete_to_color(unique_labels, label_order=unique_labels)

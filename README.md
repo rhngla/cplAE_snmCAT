@@ -11,7 +11,6 @@ conda activate snmCAT
 conda install python=3.7
 conda install pytorch torchvision torchaudio -c pytorch 
 pip install jupyterlab scikit-learn feather-format seaborn pandas rich tqdm timebudget autopep8 pyqt5
-pip install tensorflow #Caution: tf models are deprecated.
 ```
 
 
@@ -36,6 +35,19 @@ data_dir
     ├── metadata.csv
     └── rna.csv
 ```
+
+Example `config.toml`
+```toml
+data_dir = "/home/Local/dat/raw/snmCAT-seq/"
+metadata_file = "/home/Local/dat/raw/snmCAT-seq/metadata.csv"
+rna_file = "/home/Local/dat/raw/snmCAT-seq/rna.csv"
+mCH_file = "/home/Local/dat/raw/snmCAT-seq/mCH.csv"
+CH_file = "/home/Local/dat/raw/snmCAT-seq/CH.csv"
+outlier_file = "/home/Local/dat/raw/snmCAT-seq/outliers.csv" # .csv is generated within notebook 02_ouliers_E.ipynb
+outlier_ctype_file = "/home/Local/dat/raw/snmCAT-seq/outliers_ctype.csv" # Not necessary
+```
+
+
 
 ### Dataset
 
