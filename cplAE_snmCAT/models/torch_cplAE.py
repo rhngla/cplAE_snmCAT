@@ -127,7 +127,7 @@ class Encoder_E(nn.Module):
 
 class Decoder_E(nn.Module):
     """
-    Decoder for epigenetic data. Output is a ratio, with values [0,1]
+    Decoder for epigenetic data.
 
     Args:
         in_dim: set to embedding dim obtained from encoder
@@ -236,7 +236,6 @@ class Model_TE(nn.Module):
         min_eig = torch.min(torch.linalg.svdvals(zi_centered))
         min_var_zi = torch.square(min_eig)/(batch_size-1)
 
-        #Wij_paired is the weight of matched pairs
         zi_zj_mse = torch.mean(torch.sum(torch.square(zi-zj), 1))
         loss_ij = zi_zj_mse/torch.squeeze(torch.minimum(min_var_zi, min_var_zj))
         return loss_ij
