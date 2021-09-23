@@ -8,10 +8,10 @@ import scipy.io as sio
 import torch
 from cplAE_snmCAT.models.torch_cplAE import Model_TE, collect_losses, tonumpy, tensor_
 from cplAE_snmCAT.utils.load_config import load_config
-from cplAE_snmCAT.utils.proc import get_splits, select_dataset_v1
+from cplAE_snmCAT.utils.proc import get_splits, select_dataset_v2
 from torch.utils.data import DataLoader
 from functools import partial
-
+from timebudget import timebudget
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--batchsize",         default=500,             type=int,    help="Batch size")
@@ -19,7 +19,7 @@ parser.add_argument("--alpha_T",           default=1.0,             type=float, 
 parser.add_argument("--alpha_E",           default=1.0,             type=float,  help="Epigenetic reconstruction loss weight")
 parser.add_argument("--lambda_TE" ,        default=1.0,             type=float,  help="Coupling loss weight")
 parser.add_argument("--augment_decoders",  default=1,               type=int,    help="0 or 1 : Train with cross modal reconstruction")
-parser.add_argument("--latent_dim",        default=3,               type=int,    help="Number of latent dims")
+parser.add_argument("--latent_dim",        default=2,               type=int,    help="Number of latent dims")
 parser.add_argument("--n_epochs",          default=5000,            type=int,    help="Number of epochs to train")
 parser.add_argument("--remove_outliers",   default=1,               type=int,    help="Treated as boolean")
 parser.add_argument("--run_iter",          default=0,               type=int,    help="Run-specific id")
@@ -65,7 +65,7 @@ def main(alpha_T=1.0, alpha_E=1.0, lambda_TE=1.0, augment_decoders=1.0,
 
     #Data selection===================
     n_genes = 1000
-    D = select_dataset_v1(n_genes,
+    D = select_dataset_v2(n_genes,
                           select_T='sorted_highvar_T_genes',
                           select_E='sorted_highvar_E_genes')
     train_ind, val_ind = get_splits(data=D, fold=0, n_folds=10)
@@ -75,11 +75,11 @@ def main(alpha_T=1.0, alpha_E=1.0, lambda_TE=1.0, augment_decoders=1.0,
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     astensor = partial(tensor_,device=device)
 
-    def report_losses(loss_dict, partition):
+    def report_losses(loss_dict, partition_type):
         for key in loss_dict.keys():
             if key!='steps':
                 loss_dict[key] = loss_dict[key]/loss_dict['steps']
-        return '   '.join([f'{partition}_{key} : {loss_dict[key]:0.5f}' for key in loss_dict])
+        return '   '.join([f'{partition_type}_{key} : {loss_dict[key]:0.5f}' for key in loss_dict])
 
     def save_results(model, data, fname, splits=splits):
         model.eval()
@@ -93,14 +93,15 @@ def main(alpha_T=1.0, alpha_E=1.0, lambda_TE=1.0, augment_decoders=1.0,
     #Training data
     if remove_outliers != 0:
         outliers_df = pd.read_csv(dir_pth['data_dir'] / 'outliers.csv')
-        outliers_ctype_df = pd.read_csv(dir_pth['data_dir'] / 'outliers_ctype.csv')
         train_ind = np.setdiff1d(train_ind, outliers_df['ind'].values)
-        train_ind = np.setdiff1d(train_ind, outliers_ctype_df['ind'].values)
     train_dataset = TE_Dataset(T_dat=D['XT'][train_ind, :], E_dat=D['XE'][train_ind, :])
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=False)
     train_dataloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=False,
                                   sampler=train_sampler, drop_last=True, pin_memory=True)
-
+    #Note: 
+    # num_workers > 1 produces warnings that can be ignored.
+    # For this dataset/model, the num_workers > 1 only slows things down.
+    # https://github.com/pytorch/pytorch/issues/57273 
 
     #Model ============================
     model = Model_TE(T_dim=n_genes, T_int_dim=50, T_dropout=0.2,
@@ -109,7 +110,7 @@ def main(alpha_T=1.0, alpha_E=1.0, lambda_TE=1.0, augment_decoders=1.0,
                      augment_decoders=augment_decoders,
                      T_genes=D['genesT'], E_genes=D['genesE'])
 
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=0.1)
 
     model.to(device)
     #Training loop ====================
@@ -117,51 +118,53 @@ def main(alpha_T=1.0, alpha_E=1.0, lambda_TE=1.0, augment_decoders=1.0,
     best_epoch = 0
     monitor_loss = []
     
-    for epoch in range(n_epochs):
-        train_loss_dict = {}
-        train_datagen = iter(train_dataloader)
-        for _ in range(len(train_dataloader)):
-            batch = next(train_datagen)
+    with timebudget('Training'):
+        for epoch in range(n_epochs):
+            train_loss_dict = {}
+            train_datagen = iter(train_dataloader)
+            for batch in train_datagen:
+
+                #zero + forward + backward + udpate
+                #optimizer.zero_grad() #Loop is faster: 
+                for param in model.parameters():
+                    param.grad = None
+                zT, zE, XrT, XrE, loss_dict = model((astensor(batch['XT']),astensor(batch['XE'])))
+                loss = sum(loss_dict.values())
+                loss.backward()
+                optimizer.step()
+                
+                #track loss over batches:
+                train_loss_dict = collect_losses(loss_dict=loss_dict, tracked_loss=train_loss_dict)
+
+            #Validation: train mode -> eval mode + no_grad + eval mode -> train mode
+            model.eval()
+            with torch.no_grad():
+                zT, zE, XrT, XrE, loss_dict = model((astensor(D['XT'][val_ind, :]),astensor(D['XE'][val_ind, :])))
+            val_loss_dict = collect_losses(loss_dict=loss_dict, tracked_loss={})
+            model.train()
             
-            #zero + forward + backward + udpate
-            optimizer.zero_grad()
-            zT, zE, XrT, XrE, loss_dict = model((astensor(batch['XT']),astensor(batch['XE'])))
-            loss = sum(loss_dict.values())
-            loss.backward()
-            optimizer.step()
-            
-            #track loss over batches:
-            train_loss_dict = collect_losses(loss_dict=loss_dict, tracked_loss=train_loss_dict)
+            train_loss = report_losses(loss_dict=train_loss_dict, partition_type="train")
+            val_loss = report_losses(loss_dict=val_loss_dict, partition_type="val")
+            print(f'epoch {epoch:04d} Train {train_loss}')
+            print(f'epoch {epoch:04d} ----- Val {val_loss}')
 
-        #Validation: train mode -> eval mode + no_grad + eval mode -> train mode
-        model.eval()
-        with torch.no_grad():
-            zT, zE, XrT, XrE, loss_dict = model((astensor(D['XT'][val_ind, :]),astensor(D['XE'][val_ind, :])))
-        val_loss_dict = collect_losses(loss_dict=loss_dict, tracked_loss={})
-        model.train()
-        
-        train_loss = report_losses(loss_dict=train_loss_dict, partition="train")
-        val_loss = report_losses(loss_dict=val_loss_dict, partition="val")
-        print(f'epoch {epoch:04d} Train {train_loss}')
-        print(f'epoch {epoch:04d} ----- Val {val_loss}')
+            #Logging ==============
+            with open(dir_pth['logs'] + f'{fileid}.csv', "a") as f:
+                writer = csv.writer(f, delimiter=',')
+                if epoch == 0:
+                    writer.writerow(['epoch', *['train_' + s for s in train_loss_dict.keys()], *['val_' + s for s in val_loss_dict.keys()]])
+                writer.writerow([epoch+1, *train_loss_dict.values(), *val_loss_dict.values()])
+            monitor_loss.append(val_loss_dict['recon_T']+val_loss_dict['recon_E']+val_loss_dict['cpl_TE'])
 
-        #Logging ==============
-        with open(dir_pth['logs'] + f'{fileid}.csv', "a") as f:
-            writer = csv.writer(f, delimiter=',')
-            if epoch == 0:
-                writer.writerow(['epoch', *['train_' + s for s in train_loss_dict.keys()], *['val_' + s for s in val_loss_dict.keys()]])
-            writer.writerow([epoch+1, *train_loss_dict.values(), *val_loss_dict.values()])
-        monitor_loss.append(val_loss_dict['recon_T']+val_loss_dict['recon_E']+val_loss_dict['cpl_TE'])
-
-        #Checkpoint ===========
-        if (monitor_loss[-1] < best_loss) and (epoch - best_epoch > 500):
-            best_loss = monitor_loss[-1]
-            best_epoch = epoch
-            torch.save({'epoch': epoch,
-                        'hparams': model.get_hparams(),
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'loss': best_loss, }, dir_pth['result'] + f'{fileid}-best_weights.pt')
+            #Checkpoint ===========
+            if (monitor_loss[-1] < best_loss) and (epoch - best_epoch > 500):
+                best_loss = monitor_loss[-1]
+                best_epoch = epoch
+                torch.save({'epoch': epoch,
+                            'hparams': model.get_hparams(),
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'loss': best_loss, }, dir_pth['result'] + f'{fileid}-best_weights.pt')
     
     print('\nTraining completed.')
     #Save model weights on exit

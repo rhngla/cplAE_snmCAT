@@ -32,7 +32,7 @@ class Encoder_T(nn.Module):
         self.fc1 = nn.Linear(int_dim, int_dim)
         self.fc2 = nn.Linear(int_dim, int_dim)
         self.fc3 = nn.Linear(int_dim, int_dim)
-        self.fc4 = nn.Linear(int_dim, out_dim)
+        self.fc4 = nn.Linear(int_dim, out_dim, bias=False)
         self.bn = nn.BatchNorm1d(out_dim, affine=False, eps=1e-05,
                                  momentum=0.1, track_running_stats=True)
         self.relu = nn.ReLU()
@@ -76,7 +76,7 @@ class Decoder_T(nn.Module):
         return
 
     def forward(self, x):
-        x = self.elu(self.fc0(x))
+        x = self.fc0(x)
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
@@ -107,7 +107,7 @@ class Encoder_E(nn.Module):
         self.fc1 = nn.Linear(int_dim, int_dim)
         self.fc2 = nn.Linear(int_dim, int_dim)
         self.fc3 = nn.Linear(int_dim, int_dim)
-        self.fc4 = nn.Linear(int_dim, out_dim)
+        self.fc4 = nn.Linear(int_dim, out_dim, bias=False)
         self.bn = nn.BatchNorm1d(out_dim, affine=False, eps=1e-05,
                                  momentum=0.1, track_running_stats=True)
         self.relu = nn.ReLU()
@@ -127,7 +127,7 @@ class Encoder_E(nn.Module):
 
 class Decoder_E(nn.Module):
     """
-    Decoder for epigenetic data
+    Decoder for epigenetic data. Output is a ratio, with values [0,1]
 
     Args:
         in_dim: set to embedding dim obtained from encoder
@@ -148,14 +148,15 @@ class Decoder_E(nn.Module):
         self.Xout = nn.Linear(int_dim, out_dim)
         self.relu = nn.ReLU()
         self.elu = nn.ELU()
+        self.sigmoid = nn.Sigmoid()
         return
 
     def forward(self, x):
-        x = self.elu(self.fc0(x))
+        x = self.fc0(x)
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
-        x = self.Xout(x)
+        x = self.relu(self.Xout(x))
         return x
 
 
