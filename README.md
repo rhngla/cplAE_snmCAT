@@ -1,5 +1,6 @@
 ### Coupled autoencoders snmCAT dataset
 
+<img align='center' height='320' width='680' style="padding:10px 0px 10px 0px; border-radius: 0%" src="/cplAE_snmCAT/docs/summary.png"/>
 
 ### Environment
 
